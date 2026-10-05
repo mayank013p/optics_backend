@@ -1,0 +1,505 @@
+// Optics by Ivors — PostgreSQL Database Schema
+// Multi-tenant, granular RBAC, Boards, Issues, Documents, and Real-time Activity
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------
+// 1. Users & Tenancy
+// --------------------------------------------------------
+
+model User {
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  passwordHash        String
+  name                String
+  avatarUrl           String?
+  jobTitle            String?
+  emailVerified       Boolean              @default(false)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  organizationMembers OrganizationMember[]
+  workspaceMembers    WorkspaceMember[]
+  projectMembers      ProjectMember[]
+  teamMembers         TeamMember[]
+  assignedIssues      IssueAssignee[]
+  reportedIssues      Issue[]              @relation("ReportedIssues")
+  comments            IssueComment[]
+  documents           Document[]           @relation("AuthoredDocs")
+  activities          ActivityLog[]
+  notifications       Notification[]
+  attachments         Attachment[]
+  sentInvitations     Invitation[]         @relation("SentInvitations")
+}
+
+model Organization {
+  id          String               @id @default(uuid())
+  name        String
+  slug        String               @unique
+  logoUrl     String?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  members     OrganizationMember[]
+  workspaces  Workspace[]
+  teams       Team[]
+  roles       Role[]
+  projects    Project[]
+  activities  ActivityLog[]
+  invitations Invitation[]
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String
+  roleId         String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([organizationId, userId])
+}
+
+model Workspace {
+  id             String            @id @default(uuid())
+  name           String
+  slug           String
+  organizationId String
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        WorkspaceMember[]
+  projects       Project[]
+  teams          Team[]
+  invitations    Invitation[]
+
+  @@unique([organizationId, slug])
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String
+  roleId      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id])
+
+  @@unique([workspaceId, userId])
+}
+
+model Team {
+  id             String       @id @default(uuid())
+  name           String
+  description    String?
+  organizationId String
+  workspaceId    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace      Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  members        TeamMember[]
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  userId    String
+  roleId    String?
+  createdAt DateTime @default(now())
+
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role?    @relation(fields: [roleId], references: [id])
+
+  @@unique([teamId, userId])
+}
+
+// --------------------------------------------------------
+// 2. Granular RBAC (Roles & Dynamic Permissions)
+// --------------------------------------------------------
+
+model Role {
+  id                  String               @id @default(uuid())
+  name                String
+  description         String?
+  isSystem            Boolean              @default(false)
+  organizationId      String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  organization        Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions         RolePermission[]
+  organizationMembers OrganizationMember[]
+  workspaceMembers    WorkspaceMember[]
+  projectMembers      ProjectMember[]
+  teamMembers         TeamMember[]
+  invitations         Invitation[]
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique // e.g. 'issue.create', 'board.update', 'doc.publish'
+  name        String
+  description String?
+  category    String           // 'organization', 'workspace', 'project', 'issue', 'document'
+
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+// --------------------------------------------------------
+// 3. Projects, Boards & Workflows
+// --------------------------------------------------------
+
+model Project {
+  id             String          @id @default(uuid())
+  name           String
+  key            String          // e.g. "OPT", "CNX"
+  description    String?
+  icon           String?         @default("folder")
+  color          String?         @default("#3B82F6")
+  organizationId String
+  workspaceId    String
+  leadId         String?
+  status         String          @default("ACTIVE") // ACTIVE, ARCHIVED
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members        ProjectMember[]
+  boards         Board[]
+  issues         Issue[]
+  documents      Document[]
+  labels         IssueLabel[]
+  attachments    Attachment[]
+  activities     ActivityLog[]
+
+  @@unique([organizationId, key])
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id])
+
+  @@unique([projectId, userId])
+}
+
+model Board {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  projectId   String
+  isDefault   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  columns     BoardColumn[]
+  issues      Issue[]
+}
+
+model BoardColumn {
+  id        String   @id @default(uuid())
+  name      String   // "Backlog", "Todo", "In Progress", "Review", "Done"
+  boardId   String
+  position  Int      @default(0)
+  color     String?  @default("#6B7280")
+  wipLimit  Int?     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  issues    Issue[]
+}
+
+// --------------------------------------------------------
+// 4. Issues & Tasks
+// --------------------------------------------------------
+
+enum IssuePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum IssueType {
+  TASK
+  BUG
+  FEATURE
+  IMPROVEMENT
+  EPIC
+}
+
+model Issue {
+  id           String                  @id @default(uuid())
+  key          String                  // e.g. "OPT-101"
+  title        String
+  description  String?                 @db.Text
+  status       String                  @default("TODO")
+  priority     IssuePriority           @default(MEDIUM)
+  type         IssueType               @default(TASK)
+  estimate     Int?                    // Story points or hours
+  dueDate      DateTime?
+  position     Float                   @default(0)
+
+  projectId    String
+  boardId      String?
+  columnId     String?
+  reporterId   String
+
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  project      Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  board        Board?                  @relation(fields: [boardId], references: [id], onDelete: SetNull)
+  column       BoardColumn?            @relation(fields: [columnId], references: [id], onDelete: SetNull)
+  reporter     User                    @relation("ReportedIssues", fields: [reporterId], references: [id])
+
+  assignees    IssueAssignee[]
+  labels       IssueLabelAssignment[]
+  comments     IssueComment[]
+  attachments  Attachment[]
+
+  relationsOut IssueRelation[]         @relation("SourceIssueRelations")
+  relationsIn  IssueRelation[]         @relation("TargetIssueRelations")
+
+  @@unique([projectId, key])
+}
+
+model IssueAssignee {
+  id        String   @id @default(uuid())
+  issueId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([issueId, userId])
+}
+
+model IssueLabel {
+  id        String                 @id @default(uuid())
+  name      String
+  color     String                 @default("#3B82F6")
+  projectId String
+  createdAt DateTime               @default(now())
+
+  project   Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  issues    IssueLabelAssignment[]
+
+  @@unique([projectId, name])
+}
+
+model IssueLabelAssignment {
+  id        String     @id @default(uuid())
+  issueId   String
+  labelId   String
+
+  issue     Issue      @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  label     IssueLabel @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([issueId, labelId])
+}
+
+model IssueComment {
+  id        String   @id @default(uuid())
+  content   String   @db.Text
+  issueId   String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum RelationType {
+  BLOCKS
+  BLOCKED_BY
+  RELATES_TO
+  DUPLICATE_OF
+  SUBTASK
+}
+
+model IssueRelation {
+  id            String       @id @default(uuid())
+  sourceIssueId String
+  targetIssueId String
+  relationType  RelationType
+  createdAt     DateTime     @default(now())
+
+  sourceIssue   Issue        @relation("SourceIssueRelations", fields: [sourceIssueId], references: [id], onDelete: Cascade)
+  targetIssue   Issue        @relation("TargetIssueRelations", fields: [targetIssueId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceIssueId, targetIssueId, relationType])
+}
+
+// --------------------------------------------------------
+// 5. Collaborative Documents (Notion-style)
+// --------------------------------------------------------
+
+model Document {
+  id          String            @id @default(uuid())
+  title       String
+  content     String?           @db.Text // Markdown / ProseMirror JSON / Blocks
+  icon        String?           @default("file-text")
+  projectId   String
+  authorId    String
+  parentId    String?
+  isPublished Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  project     Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author      User              @relation("AuthoredDocs", fields: [authorId], references: [id])
+  parent      Document?         @relation("DocHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Document[]        @relation("DocHierarchy")
+  versions    DocumentVersion[]
+  attachments Attachment[]
+}
+
+model DocumentVersion {
+  id            String   @id @default(uuid())
+  documentId    String
+  content       String   @db.Text
+  versionNumber Int
+  updatedBy     String
+  createdAt     DateTime @default(now())
+
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+// --------------------------------------------------------
+// 6. Attachments (Postgres metadata -> Cloud Storage / S3 / R2)
+// --------------------------------------------------------
+
+model Attachment {
+  id          String    @id @default(uuid())
+  fileName    String
+  fileKey     String    @unique // Storage provider unique key
+  fileUrl     String
+  fileSize    Int
+  mimeType    String
+  uploaderId  String
+  projectId   String?
+  issueId     String?
+  documentId  String?
+  createdAt   DateTime  @default(now())
+
+  uploader    User      @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  issue       Issue?    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  document    Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+// --------------------------------------------------------
+// 7. Audit Log Stream & Notifications
+// --------------------------------------------------------
+
+model ActivityLog {
+  id             String        @id @default(uuid())
+  entityType     String        // 'ISSUE', 'BOARD', 'PROJECT', 'DOCUMENT', 'MEMBER'
+  entityId       String
+  action         String        // 'CREATED', 'UPDATED_STATUS', 'ASSIGNED', 'COMMENTED'
+  metadata       Json?
+  userId         String
+  organizationId String
+  projectId      String?
+  createdAt      DateTime      @default(now())
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project        Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // 'MENTION', 'ASSIGNED', 'STATUS_CHANGE', 'INVITATION'
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model EmailOtp {
+  id        String     @id @default(uuid())
+  email     String
+  code      String
+  purpose   OtpPurpose @default(LOGIN)
+  expiresAt DateTime
+  used      Boolean    @default(false)
+  attempts  Int        @default(0)
+  createdAt DateTime   @default(now())
+
+  @@index([email, purpose])
+}
+
+enum OtpPurpose {
+  REGISTER
+  LOGIN
+  PASSWORD_RESET
+}
+
+model Invitation {
+  id             String       @id @default(uuid())
+  email          String
+  token          String       @unique
+  roleId         String
+  organizationId String
+  workspaceId    String?
+  teamName       String?
+  invitedById    String
+  status         String       @default("PENDING") // PENDING, ACCEPTED, EXPIRED, CANCELLED
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           Role         @relation(fields: [roleId], references: [id])
+  workspace      Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  invitedBy      User         @relation("SentInvitations", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([token])
+}
