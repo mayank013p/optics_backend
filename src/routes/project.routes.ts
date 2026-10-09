@@ -10,31 +10,17 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
   try {
     const { workspaceId } = req.query;
 
-    const userWorkspaces = await prisma.workspaceMember.findMany({
-      where: { userId: req.user!.id },
-      select: { workspaceId: true },
-    });
-    const allowedWsIds = userWorkspaces.map((w) => w.workspaceId);
-
-    if (allowedWsIds.length === 0) {
-      res.json({ projects: [] });
-      return;
-    }
-
-    let targetWsIds = allowedWsIds;
+    const where: any = {
+      workspace: {
+        members: { some: { userId: req.user!.id } },
+      },
+    };
     if (workspaceId) {
-      const requestedWsId = String(workspaceId);
-      if (!allowedWsIds.includes(requestedWsId)) {
-        res.status(403).json({ error: 'Access denied: Workspace not found or unauthorized' });
-        return;
-      }
-      targetWsIds = [requestedWsId];
+      where.workspaceId = String(workspaceId);
     }
 
     const projects = await prisma.project.findMany({
-      where: {
-        workspaceId: { in: targetWsIds },
-      },
+      where,
       include: {
         workspace: {
           select: { id: true, name: true, slug: true },

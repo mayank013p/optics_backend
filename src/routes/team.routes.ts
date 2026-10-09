@@ -1,8 +1,10 @@
 import { Router, Response } from 'express';
-import prisma from '../prisma';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import prisma from '../prisma';
 import { AuthenticatedRequest, authenticateJWT } from '../middleware/auth';
 import { broadcastMemberRoleUpdate } from '../sockets/boardSocket';
+import mailService from '../services/mail.service';
 
 const router = Router();
 router.use(authenticateJWT);
@@ -10,24 +12,13 @@ router.use(authenticateJWT);
 // List Organization Team Members
 router.get('/members', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const userOrgs = await prisma.organizationMember.findMany({
-      where: { userId: req.user!.id },
-      select: { organizationId: true },
-    });
-    const allowedOrgIds = userOrgs.map((o) => o.organizationId);
-
-    if (allowedOrgIds.length === 0) {
-      res.json({ members: [] });
-      return;
-    }
-
-    let targetOrgId = req.query.orgId as string | undefined;
-    if (!targetOrgId || !allowedOrgIds.includes(targetOrgId)) {
-      targetOrgId = allowedOrgIds[0];
-    }
+    const targetOrgId = req.query.orgId as string | undefined;
+    const where: any = targetOrgId
+      ? { organizationId: targetOrgId, organization: { members: { some: { userId: req.user!.id } } } }
+      : { organization: { members: { some: { userId: req.user!.id } } } };
 
     const orgMembers = await prisma.organizationMember.findMany({
-      where: { organizationId: targetOrgId },
+      where,
       include: {
         user: {
           select: {
@@ -105,9 +96,6 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
     res.status(500).json({ error: err.message });
   }
 });
-
-import crypto from 'crypto';
-import mailService from '../services/mail.service';
 
 // List Invitations for Organization
 router.get('/invitations', async (req: AuthenticatedRequest, res: Response): Promise<void> => {

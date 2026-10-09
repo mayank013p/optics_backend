@@ -8,28 +8,14 @@ router.use(authenticateJWT);
 // List all Workspaces in the active organization with nested projects
 router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const userOrgMembers = await prisma.organizationMember.findMany({
-      where: { userId: req.user!.id },
-      select: { organizationId: true },
-    });
-    const allowedOrgIds = userOrgMembers.map((m) => m.organizationId);
-
-    // If user belongs to no organizations, return empty array immediately (never leak other workspaces!)
-    if (allowedOrgIds.length === 0) {
-      res.json({ workspaces: [] });
-      return;
-    }
-
-    let targetOrgId = req.query.orgId as string | undefined;
-    if (!targetOrgId || !allowedOrgIds.includes(targetOrgId)) {
-      targetOrgId = allowedOrgIds[0];
-    }
+    const targetOrgId = req.query.orgId as string | undefined;
+    const where: any = {
+      organizationId: targetOrgId || undefined,
+      members: { some: { userId: req.user!.id } },
+    };
 
     const workspaces = await prisma.workspace.findMany({
-      where: {
-        organizationId: targetOrgId,
-        members: { some: { userId: req.user!.id } },
-      },
+      where,
       include: {
         projects: {
           include: {

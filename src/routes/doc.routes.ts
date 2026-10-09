@@ -15,29 +15,14 @@ router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> 
   try {
     const { projectId } = req.query;
 
-    const userWorkspaces = await prisma.workspaceMember.findMany({
-      where: { userId: req.user!.id },
-      select: { workspaceId: true },
-    });
-    const allowedWsIds = userWorkspaces.map((w) => w.workspaceId);
-
-    const userProjects = await prisma.project.findMany({
-      where: { workspaceId: { in: allowedWsIds } },
-      select: { id: true },
-    });
-    const allowedProjIds = userProjects.map((p) => p.id);
-
-    if (allowedProjIds.length === 0) {
-      res.json({ documents: [] });
-      return;
-    }
-
-    const where: any = { projectId: { in: allowedProjIds } };
+    const where: any = {
+      project: {
+        workspace: {
+          members: { some: { userId: req.user!.id } },
+        },
+      },
+    };
     if (projectId) {
-      if (!allowedProjIds.includes(String(projectId))) {
-        res.status(403).json({ error: 'Access denied: Project not found or unauthorized' });
-        return;
-      }
       where.projectId = String(projectId);
     }
 
@@ -61,7 +46,14 @@ router.get('/project/:projectId', async (req: AuthenticatedRequest, res: Respons
     const projectId = String(req.params.projectId);
 
     const docs = await prisma.document.findMany({
-      where: { projectId },
+      where: {
+        projectId,
+        project: {
+          workspace: {
+            members: { some: { userId: req.user!.id } },
+          },
+        },
+      },
       include: {
         author: { select: { id: true, name: true, avatarUrl: true, email: true } },
       },
@@ -73,6 +65,7 @@ router.get('/project/:projectId', async (req: AuthenticatedRequest, res: Respons
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // Create Document
 router.post('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {

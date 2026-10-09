@@ -50,11 +50,12 @@ export const setupBoardSockets = (io: Server) => {
 export const getIO = (): Server | null => ioInstance;
 
 export const broadcastPermissionsUpdate = (data: {
-  roleId: string;
+  roleId?: string;
   roleName?: string;
   permissionCode?: string;
   enabled?: boolean;
   permissionCodes?: string[];
+  matrix?: any;
 }) => {
   if (ioInstance) {
     ioInstance.emit('permissions_matrix_sync', data);

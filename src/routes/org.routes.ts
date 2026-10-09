@@ -103,154 +103,88 @@ router.get('/roles/matrix', async (req: AuthenticatedRequest, res: Response): Pr
 
 async function listRolesMatrix(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const standardPerms = [
-      { code: 'org.manage', name: 'Manage Organization Settings & Security', category: 'Organization' },
-      { code: 'user.invite', name: 'Invite Team Members', category: 'Organization' },
-      { code: 'user.assign_role', name: 'Manage Member Roles & Access', category: 'Organization' },
-      { code: 'user.delete', name: 'Remove Members from Workspace', category: 'Organization' },
-      { code: 'workspace.create', name: 'Create Workspaces', category: 'Workspace' },
-      { code: 'workspace.manage', name: 'Manage Workspace Settings', category: 'Workspace' },
-      { code: 'project.create', name: 'Create Projects', category: 'Project' },
-      { code: 'project.update', name: 'Update Project Details', category: 'Project' },
-      { code: 'project.delete', name: 'Delete Projects', category: 'Project' },
-      { code: 'board.configure', name: 'Configure Kanban Columns & WIP Limits', category: 'Board' },
-      { code: 'task.create', name: 'Create & Assign Tasks', category: 'Task' },
-      { code: 'task.update', name: 'Edit & Update Tasks', category: 'Task' },
-      { code: 'task.move', name: 'Move & Transition Tasks', category: 'Task' },
-      { code: 'task.delete', name: 'Delete Tasks', category: 'Task' },
-      { code: 'comment.create', name: 'Post Comments & Activity Mentions', category: 'Task' },
-      { code: 'doc.create', name: 'Create & Edit Project Wiki Docs', category: 'Document' },
-      { code: 'doc.delete', name: 'Delete Project Wiki Docs', category: 'Document' },
-      { code: 'attachment.upload', name: 'Upload Cloud Attachments', category: 'Storage' },
-      { code: 'attachment.delete', name: 'Delete Cloud Attachments', category: 'Storage' },
-    ];
-
-    for (const sp of standardPerms) {
-      await prisma.permission.upsert({
-        where: { code: sp.code },
-        update: { name: sp.name, category: sp.category },
-        create: sp,
-      });
-    }
-
-    const standardRoles = [
-      { name: 'Organization Owner', description: 'Full organization superuser access' },
-      { name: 'Workspace Admin', description: 'Full workspace and project configuration access' },
-      { name: 'Project Lead', description: 'Can manage projects, configure boards, and coordinate tasks' },
-      { name: 'Developer', description: 'Can create and transition tasks, docs, and attachments' },
-      { name: 'Viewer', description: 'Read-only view access across projects and boards' },
-    ];
-
-    for (const sr of standardRoles) {
-      const existing = await prisma.role.findFirst({ where: { name: sr.name } });
-      if (!existing) {
-        await prisma.role.create({
-          data: {
-            name: sr.name,
-            description: sr.description,
-            isSystem: true,
+    let [roles, permissions] = await Promise.all([
+      prisma.role.findMany({
+        include: {
+          permissions: {
+            include: { permission: true },
           },
+          _count: { select: { organizationMembers: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.permission.findMany({
+        orderBy: { category: 'asc' },
+      }),
+    ]);
+
+    // Cold-start fallback: only seed if table is empty
+    if (permissions.length === 0 || roles.length === 0) {
+      const standardPerms = [
+        { code: 'org.manage', name: 'Manage Organization Settings & Security', category: 'Organization' },
+        { code: 'user.invite', name: 'Invite Team Members', category: 'Organization' },
+        { code: 'user.assign_role', name: 'Manage Member Roles & Access', category: 'Organization' },
+        { code: 'user.delete', name: 'Remove Members from Workspace', category: 'Organization' },
+        { code: 'workspace.create', name: 'Create Workspaces', category: 'Workspace' },
+        { code: 'workspace.manage', name: 'Manage Workspace Settings', category: 'Workspace' },
+        { code: 'project.create', name: 'Create Projects', category: 'Project' },
+        { code: 'project.update', name: 'Update Project Details', category: 'Project' },
+        { code: 'project.delete', name: 'Delete Projects', category: 'Project' },
+        { code: 'board.configure', name: 'Configure Kanban Columns & WIP Limits', category: 'Board' },
+        { code: 'task.create', name: 'Create & Assign Tasks', category: 'Task' },
+        { code: 'task.update', name: 'Edit & Update Tasks', category: 'Task' },
+        { code: 'task.subtask', name: 'Check & Manage Task Subtasks', category: 'Task' },
+        { code: 'task.move', name: 'Move & Transition Tasks', category: 'Task' },
+        { code: 'task.delete', name: 'Delete Tasks', category: 'Task' },
+        { code: 'comment.create', name: 'Post Comments & Activity Mentions', category: 'Task' },
+        { code: 'doc.create', name: 'Create & Edit Project Wiki Docs', category: 'Document' },
+        { code: 'doc.delete', name: 'Delete Project Wiki Docs', category: 'Document' },
+        { code: 'attachment.upload', name: 'Upload Cloud Attachments', category: 'Storage' },
+        { code: 'attachment.delete', name: 'Delete Cloud Attachments', category: 'Storage' },
+      ];
+
+      for (const sp of standardPerms) {
+        await prisma.permission.upsert({
+          where: { code: sp.code },
+          update: { name: sp.name, category: sp.category },
+          create: sp,
         });
       }
-    }
 
-    const allDbPerms = await prisma.permission.findMany();
-    const permMap = new Map(allDbPerms.map((p) => [p.code, p.id]));
+      const standardRoles = [
+        { name: 'Organization Owner', description: 'Full organization superuser access' },
+        { name: 'Workspace Admin', description: 'Full workspace and project configuration access' },
+        { name: 'Project Lead', description: 'Can manage projects, configure boards, and coordinate tasks' },
+        { name: 'Developer', description: 'Can create and transition tasks, docs, and attachments' },
+        { name: 'Viewer', description: 'Read-only view access across projects and boards' },
+      ];
 
-    const defaultRolePerms: Record<string, string[]> = {
-      'Organization Owner': ['*'],
-      'Workspace Admin': [
-        'org.manage',
-        'user.invite',
-        'user.assign_role',
-        'user.delete',
-        'workspace.create',
-        'workspace.manage',
-        'project.create',
-        'project.update',
-        'project.delete',
-        'board.configure',
-        'task.create',
-        'task.update',
-        'task.move',
-        'task.delete',
-        'comment.create',
-        'doc.create',
-        'doc.delete',
-        'attachment.upload',
-        'attachment.delete',
-      ],
-      'Project Lead': [
-        'user.invite',
-        'project.create',
-        'project.update',
-        'board.configure',
-        'task.create',
-        'task.update',
-        'task.move',
-        'task.delete',
-        'comment.create',
-        'doc.create',
-        'doc.delete',
-        'attachment.upload',
-      ],
-      'Developer': [
-        'task.create',
-        'task.update',
-        'task.move',
-        'comment.create',
-        'doc.create',
-        'attachment.upload',
-      ],
-      'Viewer': [],
-    };
-
-    const existingRoles = await prisma.role.findMany({
-      include: {
-        permissions: { include: { permission: true } },
-      },
-    });
-
-    // Auto-seed default role permissions ONLY on initial cold start if total role permissions in DB is 0
-    const totalRolePerms = await prisma.rolePermission.count();
-    if (totalRolePerms === 0) {
-      for (const r of existingRoles) {
-        if (defaultRolePerms[r.name]) {
-          const codesToAssign = defaultRolePerms[r.name];
-          for (const code of codesToAssign) {
-            const permId = permMap.get(code);
-            if (permId) {
-              await prisma.rolePermission.upsert({
-                where: {
-                  roleId_permissionId: { roleId: r.id, permissionId: permId },
-                },
-                update: {},
-                create: { roleId: r.id, permissionId: permId },
-              });
-            }
-          }
+      for (const sr of standardRoles) {
+        const existing = await prisma.role.findFirst({ where: { name: sr.name } });
+        if (!existing) {
+          await prisma.role.create({
+            data: {
+              name: sr.name,
+              description: sr.description,
+              isSystem: true,
+            },
+          });
         }
       }
+
+      [roles, permissions] = await Promise.all([
+        prisma.role.findMany({
+          include: {
+            permissions: { include: { permission: true } },
+            _count: { select: { organizationMembers: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        }),
+        prisma.permission.findMany({
+          orderBy: { category: 'asc' },
+        }),
+      ]);
     }
-
-    const roles = await prisma.role.findMany({
-      include: {
-        permissions: {
-          include: { permission: true },
-        },
-        _count: { select: { organizationMembers: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const permissions = await prisma.permission.findMany({
-      where: {
-        code: {
-          in: standardPerms.map((p) => p.code),
-        },
-      },
-      orderBy: { category: 'asc' },
-    });
 
     res.json({ roles, permissions });
   } catch (err: any) {
@@ -258,13 +192,205 @@ async function listRolesMatrix(req: AuthenticatedRequest, res: Response): Promis
   }
 }
 
+// Single Batch API: Sync Entire RBAC Matrix in ONE atomic operation
+router.put('/roles/matrix', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { matrix } = req.body;
+    if (!matrix || typeof matrix !== 'object') {
+      res.status(400).json({ error: 'Invalid matrix payload' });
+      return;
+    }
+
+    const allDbRoles = await prisma.role.findMany();
+    const allDbPerms = await prisma.permission.findMany();
+    const permMap = new Map(allDbPerms.map((p) => [p.code, p.id]));
+
+    const aliasNameMap: Record<string, string> = {
+      dev: 'Developer',
+      developer: 'Developer',
+      admin: 'Workspace Admin',
+      'workspace admin': 'Workspace Admin',
+      lead: 'Project Lead',
+      'project lead': 'Project Lead',
+      viewer: 'Viewer',
+      owner: 'Organization Owner',
+      'organization owner': 'Organization Owner',
+    };
+
+    // Ensure all target permissions exist in database
+    const allTargetCodes = new Set<string>();
+    Object.values(matrix).forEach((codes) => {
+      if (Array.isArray(codes)) {
+        codes.forEach((c) => {
+          if (c && c !== '*') {
+            const std = c.startsWith('issue.')
+              ? c.replace('issue.', 'task.')
+              : c.startsWith('document.')
+              ? c.replace('document.', 'doc.')
+              : c;
+            allTargetCodes.add(std);
+          }
+        });
+      }
+    });
+
+    for (const code of allTargetCodes) {
+      if (!permMap.has(code)) {
+        const created = await prisma.permission.upsert({
+          where: { code },
+          update: {},
+          create: {
+            code,
+            name: code,
+            category: code.split('.')[0] || 'custom',
+          },
+        });
+        permMap.set(code, created.id);
+      }
+    }
+
+    // Update each role in matrix
+    for (const [key, rawCodes] of Object.entries(matrix)) {
+      if (!Array.isArray(rawCodes)) continue;
+
+      const normalizedKey = key.toLowerCase().trim();
+      const targetRoleName = aliasNameMap[normalizedKey] || key;
+
+      const role = allDbRoles.find(
+        (r) =>
+          r.id === key ||
+          r.name.toLowerCase() === normalizedKey ||
+          r.name.toLowerCase() === targetRoleName.toLowerCase()
+      );
+
+      if (!role || role.name === 'Organization Owner') continue;
+
+      const targetCodes = Array.from(
+        new Set(
+          rawCodes.map((c) =>
+            c.startsWith('issue.')
+              ? c.replace('issue.', 'task.')
+              : c.startsWith('document.')
+              ? c.replace('document.', 'doc.')
+              : c
+          )
+        )
+      );
+
+      const targetPermIds = targetCodes
+        .map((code) => permMap.get(code))
+        .filter(Boolean) as string[];
+
+      // Atomically replace role permissions for this role
+      await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+      if (targetPermIds.length > 0) {
+        await prisma.rolePermission.createMany({
+          data: targetPermIds.map((permissionId) => ({
+            roleId: role.id,
+            permissionId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    broadcastPermissionsUpdate({
+      matrix,
+      permissionCodes: [],
+    });
+
+    res.json({ success: true, message: 'Matrix successfully synced in single atomic call', matrix });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/roles/matrix', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  // Alias to PUT /roles/matrix
+  const { matrix } = req.body;
+  if (!matrix) {
+    res.status(400).json({ error: 'Missing matrix in request body' });
+    return;
+  }
+  const allDbRoles = await prisma.role.findMany();
+  const allDbPerms = await prisma.permission.findMany();
+  const permMap = new Map(allDbPerms.map((p) => [p.code, p.id]));
+  const aliasNameMap: Record<string, string> = {
+    dev: 'Developer',
+    developer: 'Developer',
+    admin: 'Workspace Admin',
+    'workspace admin': 'Workspace Admin',
+    lead: 'Project Lead',
+    'project lead': 'Project Lead',
+    viewer: 'Viewer',
+    owner: 'Organization Owner',
+    'organization owner': 'Organization Owner',
+  };
+  for (const [key, rawCodes] of Object.entries(matrix)) {
+    if (!Array.isArray(rawCodes)) continue;
+    const normalizedKey = key.toLowerCase().trim();
+    const targetRoleName = aliasNameMap[normalizedKey] || key;
+    const role = allDbRoles.find(
+      (r) =>
+        r.id === key ||
+        r.name.toLowerCase() === normalizedKey ||
+        r.name.toLowerCase() === targetRoleName.toLowerCase()
+    );
+    if (!role || role.name === 'Organization Owner') continue;
+    const targetCodes = Array.from(
+      new Set(
+        rawCodes.map((c) =>
+          c.startsWith('issue.')
+            ? c.replace('issue.', 'task.')
+            : c.startsWith('document.')
+            ? c.replace('document.', 'doc.')
+            : c
+        )
+      )
+    );
+    const targetPermIds = targetCodes
+      .map((code) => permMap.get(code))
+      .filter(Boolean) as string[];
+    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+    if (targetPermIds.length > 0) {
+      await prisma.rolePermission.createMany({
+        data: targetPermIds.map((permissionId) => ({
+          roleId: role.id,
+          permissionId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  }
+  broadcastPermissionsUpdate({ matrix, permissionCodes: [] });
+  res.json({ success: true, message: 'Matrix successfully synced', matrix });
+});
+
 // Update Role Permissions (Toggle single capability or batch update)
 router.patch('/roles/:roleId/permissions', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const roleId = String(req.params.roleId);
     const { permissionCode, enabled, permissionCodes } = req.body;
 
-    const role = await prisma.role.findUnique({ where: { id: roleId } });
+    let role = await prisma.role.findUnique({ where: { id: roleId } });
+    if (!role) {
+      const aliasNameMap: Record<string, string> = {
+        dev: 'Developer',
+        admin: 'Workspace Admin',
+        lead: 'Project Lead',
+        viewer: 'Viewer',
+        owner: 'Organization Owner',
+      };
+      const searchName = aliasNameMap[roleId.toLowerCase()] || roleId;
+      role = await prisma.role.findFirst({
+        where: {
+          OR: [
+            { name: { equals: searchName, mode: 'insensitive' } },
+            { name: { contains: searchName, mode: 'insensitive' } },
+          ],
+        },
+      });
+    }
     if (!role) {
       res.status(404).json({ error: 'Role not found' });
       return;
@@ -282,6 +408,7 @@ router.patch('/roles/:roleId/permissions', async (req: AuthenticatedRequest, res
       'issue.update': ['task.update'],
       'task.delete': ['issue.delete', 'issues.delete'],
       'issue.delete': ['task.delete'],
+      'task.subtask': ['subtask.toggle', 'subtask.update', 'task.subtasks', 'task.checklist'],
       'task.move': ['issue.move', 'issues.move'],
       'issue.move': ['task.move'],
       'doc.create': ['document.create', 'docs.create'],
@@ -304,40 +431,52 @@ router.patch('/roles/:roleId/permissions', async (req: AuthenticatedRequest, res
         )
       );
 
-      await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
-
       for (const code of targetCodes) {
-        let perm = await prisma.permission.findUnique({ where: { code } });
-        if (!perm) {
-          perm = await prisma.permission.create({
-            data: {
-              code,
-              name: code,
-              category: code.split('.')[0] || 'custom',
-            },
-          });
-        }
-        await prisma.rolePermission.create({
-          data: {
-            roleId: role.id,
-            permissionId: perm.id,
+        await prisma.permission.upsert({
+          where: { code },
+          update: {},
+          create: {
+            code,
+            name: code,
+            category: code.split('.')[0] || 'custom',
           },
         });
       }
+
+      const dbPerms = await prisma.permission.findMany({
+        where: { code: { in: targetCodes } },
+        select: { id: true },
+      });
+
+      await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+      if (dbPerms.length > 0) {
+        await prisma.rolePermission.createMany({
+          data: dbPerms.map((p) => ({
+            roleId: role.id,
+            permissionId: p.id,
+          })),
+          skipDuplicates: true,
+        });
+      }
     } else if (permissionCode !== undefined) {
-      const allRelatedCodes = [permissionCode, ...(ALIAS_MAP[permissionCode] || [])];
+      const allRelatedCodes = Array.from(
+        new Set([
+          permissionCode,
+          ...(ALIAS_MAP[permissionCode] || []),
+        ])
+      );
       
       if (enabled) {
-        let perm = await prisma.permission.findUnique({ where: { code: permissionCode } });
-        if (!perm) {
-          perm = await prisma.permission.create({
-            data: {
-              code: permissionCode,
-              name: permissionCode,
-              category: permissionCode.split('.')[0] || 'custom',
-            },
-          });
-        }
+        const perm = await prisma.permission.upsert({
+          where: { code: permissionCode },
+          update: {},
+          create: {
+            code: permissionCode,
+            name: permissionCode,
+            category: permissionCode.split('.')[0] || 'custom',
+          },
+          select: { id: true },
+        });
 
         await prisma.rolePermission.upsert({
           where: {
@@ -353,9 +492,9 @@ router.patch('/roles/:roleId/permissions', async (req: AuthenticatedRequest, res
           },
         });
       } else {
-        // Find all matching permission rows for this code and its aliases
         const matchingDbPerms = await prisma.permission.findMany({
           where: { code: { in: allRelatedCodes } },
+          select: { id: true },
         });
         if (matchingDbPerms.length > 0) {
           await prisma.rolePermission.deleteMany({
@@ -369,7 +508,7 @@ router.patch('/roles/:roleId/permissions', async (req: AuthenticatedRequest, res
     }
 
     const updated = await prisma.role.findUnique({
-      where: { id: roleId },
+      where: { id: role.id },
       include: {
         permissions: { include: { permission: true } },
       },
@@ -390,8 +529,8 @@ router.patch('/roles/:roleId/permissions', async (req: AuthenticatedRequest, res
 
     // Real-time broadcast to all connected clients
     broadcastPermissionsUpdate({
-      roleId,
-      roleName: updated?.name,
+      roleId: role.id,
+      roleName: role.name,
       permissionCode,
       enabled,
       permissionCodes: permCodes,
