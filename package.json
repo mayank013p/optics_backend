@@ -5,8 +5,9 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon",
-    "build": "rimraf dist && tsc",
+    "build": "prisma generate && rimraf dist && tsc",
     "start": "node dist/server.js",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push",
