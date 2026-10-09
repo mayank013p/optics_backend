@@ -58,14 +58,20 @@ class MailService {
     this.initTransporter();
   }
 
+  private resendApiKey: string | null = null;
+
   private initTransporter() {
+    this.resendApiKey = process.env.RESEND_API_KEY || null;
     const host = process.env.SMTP_HOST;
     const port = parseInt(process.env.SMTP_PORT || '587', 10);
     const user = process.env.SMTP_USER;
     const pass = process.env.SMTP_PASSWORD;
     const secure = process.env.SMTP_SECURE === 'true' || port === 465;
 
-    if (host && user && pass) {
+    if (this.resendApiKey) {
+      this.isConfigured = true;
+      console.log('📬 [MailService] Configured with Resend HTTPS API');
+    } else if (host && user && pass) {
       this.transporter = nodemailer.createTransport({
         host,
         port,
@@ -77,12 +83,52 @@ class MailService {
         tls: {
           rejectUnauthorized: false,
         },
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 10000,
+        pool: false,
       });
       this.isConfigured = true;
       console.log(`[MailService] Initialized SMTP transporter with host: ${host}:${port} (secure: ${secure})`);
     } else {
-      console.warn('[MailService] SMTP credentials not fully provided. Emails will be logged to console.');
+      console.warn('[MailService] SMTP/Resend credentials not fully provided. Emails will be logged to console.');
       this.isConfigured = false;
+    }
+  }
+
+  private async sendViaResend(params: {
+    from: string;
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: params.from,
+          to: [params.to],
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+        }),
+      });
+
+      const data: any = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || data.error?.message || 'Failed to send email via Resend API');
+      }
+
+      console.log(`[MailService] Email sent via Resend HTTPS API to ${params.to}. ID: ${data.id}`);
+      return { success: true, messageId: data.id };
+    } catch (err: any) {
+      console.error(`[MailService] Resend API error:`, err.message);
+      return { success: false, error: err.message };
     }
   }
 
@@ -116,6 +162,20 @@ class MailService {
     const fromAddress = process.env.SMTP_FROM || '"Optics" <no-reply@ivors.in>';
     const template = renderOtpEmail({ code, purpose, name, expiryMinutes });
 
+    if (this.resendApiKey) {
+      const resendRes = await this.sendViaResend({
+        from: fromAddress,
+        to,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+      if (!resendRes.success) {
+        console.warn(`[MailService FALLBACK] OTP for ${to} (${purpose}) is: ${code}`);
+      }
+      return resendRes;
+    }
+
     if (!this.transporter || !this.isConfigured) {
       console.log(`[MailService SIMULATION] OTP to ${to} (${purpose}): ${code}`);
       return { success: true, messageId: `simulated-otp-${Date.now()}` };
@@ -134,6 +194,7 @@ class MailService {
       return { success: true, messageId: info.messageId };
     } catch (err: any) {
       console.error(`[MailService] Failed to send OTP to ${to}:`, err.message);
+      console.warn(`[MailService FALLBACK] OTP for ${to} (${purpose}) is: ${code}`);
       return { success: false, error: err.message };
     }
   }
@@ -156,6 +217,16 @@ class MailService {
 
     const fromAddress = process.env.SMTP_FROM || '"Optics" <no-reply@ivors.in>';
     const template = renderWelcomeEmail({ email: to, name, orgName, loginUrl });
+
+    if (this.resendApiKey) {
+      return this.sendViaResend({
+        from: fromAddress,
+        to,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+    }
 
     if (!this.transporter || !this.isConfigured) {
       console.log(`[MailService SIMULATION] Welcome email sent to: ${to}`);
@@ -215,8 +286,23 @@ class MailService {
       expiresDays,
     });
 
+    if (this.resendApiKey) {
+      const resendRes = await this.sendViaResend({
+        from: fromAddress,
+        to,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+      if (!resendRes.success && inviteUrl) {
+        console.warn(`[MailService FALLBACK] Invite URL for ${to} is: ${inviteUrl}`);
+      }
+      return resendRes;
+    }
+
     if (!this.transporter || !this.isConfigured) {
       console.log(`[MailService SIMULATION] Invitation sent to: ${to}`);
+      if (inviteUrl) console.log(`[MailService SIMULATION] Invite URL: ${inviteUrl}`);
       return { success: true, messageId: `simulated-invite-${Date.now()}` };
     }
 
@@ -233,6 +319,7 @@ class MailService {
       return { success: true, messageId: info.messageId };
     } catch (err: any) {
       console.error(`[MailService] Failed to send invitation email to ${to}:`, err.message);
+      if (inviteUrl) console.warn(`[MailService FALLBACK] Invite URL for ${to} is: ${inviteUrl}`);
       return { success: false, error: err.message };
     }
   }
@@ -262,6 +349,16 @@ class MailService {
       ipAddress,
       device,
     });
+
+    if (this.resendApiKey) {
+      return this.sendViaResend({
+        from: fromAddress,
+        to,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+    }
 
     if (!this.transporter || !this.isConfigured) {
       console.log(`[MailService SIMULATION] Security alert sent to: ${to} (${action})`);
