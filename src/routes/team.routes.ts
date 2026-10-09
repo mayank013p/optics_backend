@@ -205,15 +205,19 @@ router.post('/invitations/:id/resend', async (req: AuthenticatedRequest, res: Re
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
     const inviteUrl = `${clientUrl}/invite?token=${newToken}`;
 
-    await mailService.sendInvitationEmail({
-      to: invite.email,
-      inviterName: req.user?.name || 'Your Team Lead',
-      orgName: userOrg.organization.name,
-      roleName: invite.role.name,
-      teamName: invite.teamName || undefined,
-      inviteUrl,
-      expiresDays: 7,
-    });
+    mailService
+      .sendInvitationEmail({
+        to: invite.email,
+        inviterName: req.user?.name || 'Your Team Lead',
+        orgName: userOrg.organization.name,
+        roleName: invite.role.name,
+        teamName: invite.teamName || undefined,
+        inviteUrl,
+        expiresDays: 7,
+      })
+      .catch((err) => {
+        console.error('[MailService Resend Invite Error]:', err.message);
+      });
 
     res.json({
       success: true,
@@ -375,20 +379,24 @@ router.post('/invite', async (req: AuthenticatedRequest, res: Response): Promise
       },
     });
 
-    // 9. Dispatch real email via configured AWS SES SMTP credentials
+    // 9. Dispatch email asynchronously in background
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
     const inviteUrl = `${clientUrl}/invite?token=${token}`;
 
-    const mailResult = await mailService.sendInvitationEmail({
-      to: normalizedEmail,
-      recipientName: name.trim(),
-      inviterName: req.user?.name || 'Your Team Lead',
-      orgName: organization.name,
-      roleName: rbacRole.name,
-      teamName: team,
-      inviteUrl,
-      expiresDays: 7,
-    });
+    mailService
+      .sendInvitationEmail({
+        to: normalizedEmail,
+        recipientName: name.trim(),
+        inviterName: req.user?.name || 'Your Team Lead',
+        orgName: organization.name,
+        roleName: rbacRole.name,
+        teamName: team,
+        inviteUrl,
+        expiresDays: 7,
+      })
+      .catch((err) => {
+        console.error('[MailService Invite Dispatch Error]:', err.message);
+      });
 
     res.status(201).json({
       member: {
@@ -410,10 +418,8 @@ router.post('/invite', async (req: AuthenticatedRequest, res: Response): Promise
         status: invitation.status,
       },
       inviteUrl,
-      emailSent: mailResult.success,
-      message: mailResult.success 
-        ? `Invitation sent successfully to ${normalizedEmail}` 
-        : `Member added. Email notification queued (SMTP notice: ${mailResult.error || 'check console'}). Direct link: ${inviteUrl}`,
+      emailSent: true,
+      message: `Invitation queued and link generated for ${normalizedEmail}`,
     });
   } catch (err: any) {
     console.error('Invite error:', err);

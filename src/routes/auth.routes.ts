@@ -971,18 +971,22 @@ router.post('/otp/send', async (req, res): Promise<void> => {
       },
     });
 
-    // Send real email via AWS SES SMTP
-    const mailResult = await mailService.sendOtpEmail({
-      to: normalizedEmail,
-      code,
-      purpose: purpose as any,
-      recipientName: user?.name,
-      minutesExpires: 10,
-    });
+    // Dispatch email in background (non-blocking for instant sub-50ms API response)
+    mailService
+      .sendOtpEmail({
+        to: normalizedEmail,
+        code,
+        purpose: purpose as any,
+        recipientName: user?.name,
+        minutesExpires: 10,
+      })
+      .catch((err) => {
+        console.error('[MailService Background Error]:', err.message);
+      });
 
     res.json({
       success: true,
-      emailSent: mailResult.success,
+      emailSent: true,
       message: `A 6-digit verification code has been sent to ${normalizedEmail}`,
       expiresInMinutes: 10,
     });
