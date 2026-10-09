@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "nodemon",
     "build": "prisma generate && rimraf dist && tsc",
-    "prestart": "npm run build",
     "start": "node dist/server.js",
     "postinstall": "prisma generate && tsc",
     "prisma:generate": "prisma generate",

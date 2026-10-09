@@ -68,10 +68,10 @@ app.use('/api/teams', teamRoutes);
 // Error handling middleware
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT) || 4000;
 
-server.listen(PORT, () => {
-  console.log(`🚀 [Optics API] Server running on http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 [Optics API] Server running on port ${PORT}`);
   console.log(`⚡ [Optics Real-time] WebSockets initialized`);
 });
 
