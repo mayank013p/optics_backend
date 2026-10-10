@@ -62,10 +62,10 @@ class MailService {
 
   private initTransporter() {
     this.resendApiKey = process.env.RESEND_API_KEY || null;
-    const host = process.env.SMTP_HOST;
+    const host = process.env.SMTP_HOST?.trim();
     const port = parseInt(process.env.SMTP_PORT || '587', 10);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASSWORD;
+    const user = process.env.SMTP_USER?.trim().replace(/^["']|["']$/g, '');
+    const pass = process.env.SMTP_PASSWORD?.trim().replace(/^["']|["']$/g, '');
     const secure = process.env.SMTP_SECURE === 'true' || port === 465;
 
     if (this.resendApiKey) {
